@@ -11,7 +11,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function setStatus(text){els.status.textContent=text}
 function wikidataUrl(qid){return `https://www.wikidata.org/wiki/${encodeURIComponent(qid)}`}
 function wikipediaUrl(title){return `https://ja.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g,'_'))}`}
-function escapeHtml(s=''){return s.replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+function escapeHtml(s=''){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 
 async function fetchJson(url,options={}){const r=await fetch(url,options);if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json()}
 
@@ -24,7 +24,7 @@ async function fetchWikidataPlaces(bounds){
   for(const row of data.results.bindings){
     const qid=row.item.value.split('/').pop();
     const m=row.location.value.match(/Point\(([-\d.]+) ([-\d.]+)\)/);if(!m)continue;
-    const p=byId.get(qid)||{qid,title:row.itemLabel?.value||qid,lat:+m[2],lng:+m[1],wikiTitle:null,links:new Set()};
+    const p=byId.get(qid)||{qid,title:row.itemLabel?.value||qid,lat:+m[2],lng:+m[1],wikiTitle:null,links:new Set(),contexts:new Map()};
     if(row.article?.value)p.wikiTitle=decodeURIComponent(row.article.value.split('/wiki/')[1]||'').replace(/_/g,' ');
     byId.set(qid,p);
   }
@@ -56,32 +56,103 @@ async function enrichWikipediaLinks(items){
 
 function buildTopics(items){
   const counts=new Map();
-  for(const p of items){for(const title of p.links){const entry=counts.get(title)||{title,count:0,placeIds:[]};entry.count++;entry.placeIds.push(p.qid);counts.set(title,entry)}}
-  return [...counts.values()].filter(x=>x.count>=2).sort((a,b)=>b.count-a.count||a.title.localeCompare(b.title,'ja')).slice(0,60);
+  for(const p of items){
+    for(const title of p.links){
+      const entry=counts.get(title)||{title,count:0,placeIds:[]};
+      entry.count++;
+      entry.placeIds.push(p.qid);
+      counts.set(title,entry);
+    }
+  }
+  return [...counts.values()].sort((a,b)=>b.count-a.count||a.title.localeCompare(b.title,'ja'));
+}
+
+async function fetchTopicContext(place,topicTitle){
+  if(!place.wikiTitle)return '';
+  if(place.contexts.has(topicTitle))return place.contexts.get(topicTitle);
+  const params=new URLSearchParams({action:'parse',format:'json',origin:'*',page:place.wikiTitle,prop:'text',disableeditsection:'1'});
+  try{
+    const data=await fetchJson('https://ja.wikipedia.org/w/api.php?'+params);
+    const html=data.parse?.text?.['*']||'';
+    const doc=new DOMParser().parseFromString(html,'text/html');
+    const target=topicTitle.replace(/ /g,'_');
+    let context='';
+    for(const a of doc.querySelectorAll('a')){
+      const href=a.getAttribute('href')||'';
+      const title=a.getAttribute('title')||'';
+      const hrefTarget=decodeURIComponent(href.split('/wiki/')[1]||'').split('#')[0].replace(/_/g,' ');
+      if(title===topicTitle||hrefTarget===topicTitle||hrefTarget.replace(/ /g,'_')===target){
+        const block=a.closest('p,li,dd,td');
+        if(!block)continue;
+        const text=block.textContent.replace(/\[[^\]]*\]/g,'').replace(/\s+/g,' ').trim();
+        if(text.length>=20){context=text.length>260?text.slice(0,257)+'…':text;break}
+      }
+    }
+    if(!context){
+      const bodyText=doc.body?.textContent.replace(/\s+/g,' ').trim()||'';
+      const i=bodyText.indexOf(topicTitle);
+      if(i>=0){const start=Math.max(0,i-90),end=Math.min(bodyText.length,i+topicTitle.length+150);context=(start>0?'…':'')+bodyText.slice(start,end)+(end<bodyText.length?'…':'')}
+    }
+    place.contexts.set(topicTitle,context);
+    return context;
+  }catch(e){console.warn('context',place.wikiTitle,topicTitle,e);place.contexts.set(topicTitle,'');return ''}
+}
+
+async function enrichTopicContexts(topic){
+  const ids=new Set(topic.placeIds);
+  const related=places.filter(p=>ids.has(p.qid)&&p.wikiTitle);
+  for(let i=0;i<related.length;i+=4){
+    const batch=related.slice(i,i+4);
+    setStatus(`${topic.title} の文脈を取得中 ${Math.min(i+batch.length,related.length)}/${related.length}`);
+    await Promise.all(batch.map(p=>fetchTopicContext(p,topic.title)));
+    if(selectedTopic?.title===topic.title)renderMarkers();
+    if(i+4<related.length)await sleep(60);
+  }
+  if(selectedTopic?.title===topic.title)setStatus(`${topic.title}：関連地点 ${related.length}件`);
 }
 
 function popupHtml(p){
   const wiki=p.wikiTitle?`<a href="${wikipediaUrl(p.wikiTitle)}" target="_blank" rel="noopener">Wikipedia</a>`:'';
   const google=`<a href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}" target="_blank" rel="noopener">Google Maps</a>`;
-  return `<div class="place-popup-title">${escapeHtml(p.title)}</div><div class="place-popup-meta">${escapeHtml(p.qid)}${p.wikiTitle?' · 日本語Wikipediaあり':''}</div><div class="place-popup-links">${wiki}<a href="${wikidataUrl(p.qid)}" target="_blank" rel="noopener">Wikidata</a>${google}</div>`;
+  let context='';
+  if(selectedTopic){
+    const stored=p.contexts?.get(selectedTopic.title);
+    const body=stored===undefined?'文脈を読み込み中…':stored||'本文中の該当箇所を短く抽出できませんでした。';
+    context=`<div class="topic-context"><div class="topic-context-label">${escapeHtml(selectedTopic.title)}との関わり</div><div class="topic-context-text">${escapeHtml(body)}</div></div>`;
+  }
+  return `<div class="place-popup-title">${escapeHtml(p.title)}</div><div class="place-popup-meta">${escapeHtml(p.qid)}${p.wikiTitle?' · 日本語Wikipediaあり':''}</div>${context}<div class="place-popup-links">${wiki}<a href="${wikidataUrl(p.qid)}" target="_blank" rel="noopener">Wikidata</a>${google}</div>`;
 }
 
 function renderMarkers(){
   markerLayer.clearLayers();
   let visible=places;
   if(selectedTopic){const ids=new Set(selectedTopic.placeIds);visible=places.filter(p=>ids.has(p.qid))}
-  for(const p of visible)L.marker([p.lat,p.lng],{icon:markerIcon,title:p.title}).bindPopup(popupHtml(p)).addTo(markerLayer);
+  for(const p of visible)L.marker([p.lat,p.lng],{icon:markerIcon,title:p.title}).bindPopup(()=>popupHtml(p),{maxWidth:330}).addTo(markerLayer);
   if(selectedTopic)setStatus(`${selectedTopic.title}：関連地点 ${visible.length}件`);
 }
 
 function renderTopics(){
   els.list.replaceChildren();
   els.count.textContent=topics.length?`${topics.length}件`:'';
-  if(!topics.length){const d=document.createElement('div');d.className='place-popup-meta';d.textContent='共通リンクのあるトピックが見つかりませんでした。';els.list.append(d);return}
-  for(const t of topics){const b=document.createElement('button');b.type='button';b.className='topic-chip';b.textContent=`${t.title} ${t.count}`;if(selectedTopic?.title===t.title)b.classList.add('active');b.addEventListener('click',()=>selectTopic(t));els.list.append(b)}
+  if(!topics.length){const d=document.createElement('div');d.className='place-popup-meta';d.textContent='トピックが見つかりませんでした。';els.list.append(d);return}
+  for(const t of topics){
+    const b=document.createElement('button');b.type='button';b.className='topic-chip';b.textContent=`${t.title} ${t.count}`;
+    if(selectedTopic?.title===t.title)b.classList.add('active');
+    b.addEventListener('click',()=>selectTopic(t));
+    els.list.append(b);
+  }
 }
 
-function selectTopic(topic){selectedTopic=topic;els.selection.hidden=false;els.selectionText.textContent=`${topic.title} · ${topic.count}地点`;els.sheet.classList.remove('open');els.handle.setAttribute('aria-expanded','false');renderTopics();renderMarkers()}
+function selectTopic(topic){
+  selectedTopic=topic;
+  els.selection.hidden=false;
+  els.selectionText.textContent=`${topic.title} · ${topic.count}地点`;
+  els.sheet.classList.remove('open');
+  els.handle.setAttribute('aria-expanded','false');
+  renderTopics();
+  renderMarkers();
+  enrichTopicContexts(topic);
+}
 function clearTopic(){selectedTopic=null;els.selection.hidden=true;renderTopics();renderMarkers();setStatus(`${places.length}地点を表示中`)}
 
 async function loadArea(){
