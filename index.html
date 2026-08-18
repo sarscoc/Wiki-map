@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f7f7f5">
+  <title>Wiki Map</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <div id="map" aria-label="Wiki Map"></div>
+
+    <div class="top-bar">
+      <div class="brand">Wiki Map</div>
+      <div id="status" class="status">地図を動かして読み込んでください</div>
+    </div>
+
+    <button id="loadAreaButton" class="load-button" type="button">この範囲を読み込む</button>
+
+    <section id="topicSheet" class="topic-sheet" aria-live="polite">
+      <button id="sheetHandle" class="sheet-handle" type="button" aria-expanded="false">
+        <span class="grabber" aria-hidden="true"></span>
+        <span id="sheetTitle">この周辺のトピック</span>
+        <span id="sheetCount" class="sheet-count"></span>
+      </button>
+      <div id="topicList" class="topic-list"></div>
+      <div id="selectionBar" class="selection-bar" hidden>
+        <span id="selectionText"></span>
+        <button id="clearSelectionButton" type="button" aria-label="トピック選択を解除">×</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="app.js"></script>
+</body>
+</html>
