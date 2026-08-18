@@ -28,8 +28,14 @@
       </button>
       <div id="topicList" class="topic-list"></div>
       <div id="selectionBar" class="selection-bar" hidden>
-        <span id="selectionText"></span>
-        <button id="clearSelectionButton" type="button" aria-label="トピック選択を解除">×</button>
+        <div class="selection-main">
+          <span id="selectionText"></span>
+          <div class="relation-modes" role="group" aria-label="関連地点の検索方法">
+            <button id="localModeButton" class="relation-mode active" type="button">この範囲</button>
+            <button id="reverseModeButton" class="relation-mode" type="button">逆引き</button>
+          </div>
+        </div>
+        <button id="clearSelectionButton" class="selection-close" type="button" aria-label="トピック選択を解除">×</button>
       </div>
     </section>
   </main>
