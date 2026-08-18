@@ -11,36 +11,3 @@
 </head>
 <body>
   <main class="app-shell">
-    <div id="map" aria-label="Wiki Map"></div>
-
-    <div class="top-bar">
-      <div class="brand">Wiki Map</div>
-      <div id="status" class="status">地図を動かして読み込んでください</div>
-    </div>
-
-    <button id="loadAreaButton" class="load-button" type="button">この範囲を読み込む</button>
-
-    <section id="topicSheet" class="topic-sheet" aria-live="polite">
-      <button id="sheetHandle" class="sheet-handle" type="button" aria-expanded="false">
-        <span class="grabber" aria-hidden="true"></span>
-        <span id="sheetTitle">この周辺のトピック</span>
-        <span id="sheetCount" class="sheet-count"></span>
-      </button>
-      <div id="topicList" class="topic-list"></div>
-      <div id="selectionBar" class="selection-bar" hidden>
-        <div class="selection-main">
-          <span id="selectionText"></span>
-          <div class="relation-modes" role="group" aria-label="関連地点の検索方法">
-            <button id="localModeButton" class="relation-mode active" type="button">この範囲</button>
-            <button id="reverseModeButton" class="relation-mode" type="button">逆引き</button>
-          </div>
-        </div>
-        <button id="clearSelectionButton" class="selection-close" type="button" aria-label="トピック選択を解除">×</button>
-      </div>
-    </section>
-  </main>
-
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="app.js"></script>
-</body>
-</html>
