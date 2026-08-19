@@ -54,18 +54,14 @@ function readHistory() {
   try {
     const value = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
     return Array.isArray(value) ? value : [];
-  } catch (_) {
-    return [];
-  }
+  } catch (_) { return []; }
 }
 function writeHistory(items) {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, 100))); } catch (_) {}
 }
 function addHistory(entry) {
   const items = readHistory();
-  const key = entry.kind === 'topic'
-    ? `topic:${entry.topicTitle}`
-    : `place:${entry.topicTitle}:${entry.source}:${entry.qid || entry.placeTitle}`;
+  const key = entry.kind === 'topic' ? `topic:${entry.topicTitle}` : `place:${entry.topicTitle}:${entry.source}:${entry.qid || entry.placeTitle}`;
   const filtered = items.filter(item => item.key !== key);
   filtered.unshift({ ...entry, key, ts: Date.now() });
   writeHistory(filtered);
@@ -113,10 +109,7 @@ async function fetchPageLinks(title) {
   const links = new Set();
   let cont = null;
   for (let page = 0; page < 12; page++) {
-    const params = new URLSearchParams({
-      action: 'query', format: 'json', origin: '*', prop: 'links', titles: title,
-      plnamespace: '0', pllimit: 'max'
-    });
+    const params = new URLSearchParams({ action: 'query', format: 'json', origin: '*', prop: 'links', titles: title, plnamespace: '0', pllimit: 'max' });
     if (cont) params.set('plcontinue', cont);
     const data = await fetchJson('https://ja.wikipedia.org/w/api.php?' + params);
     const item = Object.values(data.query?.pages || {})[0];
@@ -171,10 +164,7 @@ function shortContext(text, needle = '', max = 280) {
 
 async function fetchArticle(topicTitle) {
   if (articleCache.has(topicTitle)) return articleCache.get(topicTitle);
-  const params = new URLSearchParams({
-    action: 'parse', format: 'json', origin: '*', page: topicTitle,
-    prop: 'text|links', disableeditsection: '1'
-  });
+  const params = new URLSearchParams({ action: 'parse', format: 'json', origin: '*', page: topicTitle, prop: 'text|links', disableeditsection: '1' });
   const data = await fetchJson('https://ja.wikipedia.org/w/api.php?' + params);
   const html = data.parse?.text?.['*'] || '';
   const links = (data.parse?.links || []).filter(link => link.ns === 0 && link.exists !== undefined).map(link => link['*']);
@@ -218,14 +208,27 @@ async function coordinatesForTitles(titles, source, topicTitle, token, contextMa
     if (token !== requestToken) return [];
     const batch = titles.slice(i, i + 50);
     setStatus(`${topicTitle}：${source === 'link' ? 'リンク' : 'テキスト候補'}を照合中 ${Math.min(i + batch.length, titles.length)}/${titles.length}`);
-    const params = new URLSearchParams({
-      action: 'query', format: 'json', origin: '*', prop: 'coordinates|pageprops',
-      ppprop: 'wikibase_item', colimit: 'max', redirects: '1', titles: batch.join('|')
-    });
+    const params = new URLSearchParams({ action: 'query', format: 'json', origin: '*', prop: 'coordinates|pageprops', ppprop: 'wikibase_item', colimit: 'max', redirects: '1', titles: batch.join('|') });
     const data = await fetchJson('https://ja.wikipedia.org/w/api.php?' + params);
+
+    // MediaWikiの正規化・リダイレクト後も、元リンクの本文文脈を引き継ぐ。
+    const originalFor = new Map(batch.map(title => [title, title]));
+    for (const item of data.query?.normalized || []) {
+      const original = originalFor.get(item.from) || item.from;
+      originalFor.set(item.to, original);
+    }
+    for (const item of data.query?.redirects || []) {
+      const original = originalFor.get(item.from) || item.from;
+      originalFor.set(item.to, original);
+    }
+
     for (const page of Object.values(data.query?.pages || {})) {
       const c = page.coordinates?.[0];
       if (!c) continue;
+      const originalTitle = originalFor.get(page.title) || page.title;
+      const context = contextMap.get(page.title) || contextMap.get(originalTitle) || '';
+      // 「記事内リンク」は、本文中で実際に使われた文脈が確認できるものだけ表示する。
+      if (source === 'link' && !context) continue;
       found.push({
         qid: page.pageprops?.wikibase_item || `page-${page.pageid}`,
         title: page.title,
@@ -233,7 +236,7 @@ async function coordinatesForTitles(titles, source, topicTitle, token, contextMa
         lng: c.lon,
         wikiTitle: page.title,
         source,
-        sourceContext: contextMap.get(page.title) || ''
+        sourceContext: context
       });
     }
     if (i + 50 < titles.length) await sleep(30);
@@ -276,17 +279,12 @@ async function resolveCandidateTitles(candidateMap, topicTitle, token) {
     setStatus(`${topicTitle}：本文候補を検索中 ${Math.min(i + batch.length, entries.length)}/${entries.length}`);
     await Promise.all(batch.map(async ([candidate, context]) => {
       try {
-        const params = new URLSearchParams({
-          action: 'query', format: 'json', origin: '*', list: 'search',
-          srsearch: `"${candidate}"`, srnamespace: '0', srlimit: '3'
-        });
+        const params = new URLSearchParams({ action: 'query', format: 'json', origin: '*', list: 'search', srsearch: `"${candidate}"`, srnamespace: '0', srlimit: '3' });
         const data = await fetchJson('https://ja.wikipedia.org/w/api.php?' + params);
         const hits = data.query?.search || [];
         const exact = hits.find(hit => hit.title === candidate) || hits[0];
         if (exact) resolved.push({ title: exact.title, context });
-      } catch (error) {
-        console.warn('candidate', candidate, error);
-      }
+      } catch (error) { console.warn('candidate', candidate, error); }
     }));
     if (i + 10 < entries.length) await sleep(35);
     if (resolved.length >= 500) break;
@@ -299,7 +297,7 @@ async function loadLinkTab() {
   const token = ++requestToken;
   activeTab = 'links';
   updateTabs();
-  renderPanelMessage('記事内リンクから、位置情報のある項目を探しています…');
+  renderPanelMessage('記事本文のリンクから、位置情報のある項目を探しています…');
   try {
     if (linkPlaceCache.has(selectedTopic.title)) {
       displayPlaces = linkPlaceCache.get(selectedTopic.title);
@@ -403,9 +401,7 @@ function popupHtml(place) {
   const google = `<a href="https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lng}" target="_blank" rel="noopener">Google Maps</a>`;
   let quote = '';
   if (selectedTopic && place.sourceContext) {
-    const label = place.source === 'local'
-      ? `${selectedTopic.title}との関わり`
-      : `「${selectedTopic.title}」での記述`;
+    const label = place.source === 'local' ? `${selectedTopic.title}との関わり` : `「${selectedTopic.title}」での記述`;
     quote = `<div class="topic-context"><div class="topic-context-label">${escapeHtml(label)}</div><div class="topic-context-text">${escapeHtml(place.sourceContext)}</div></div>`;
   } else if (selectedTopic && place.source === 'local' && place.wikiTitle) {
     quote = '<div class="topic-context"><div class="topic-context-label">関わり</div><div class="topic-context-text">該当箇所を読み込み中…</div></div>';
@@ -416,17 +412,7 @@ function popupHtml(place) {
 
 function recordPlaceHistory(place) {
   if (!selectedTopic) return;
-  addHistory({
-    kind: 'place',
-    topicTitle: selectedTopic.title,
-    placeTitle: place.title,
-    qid: place.qid,
-    source: place.source,
-    lat: place.lat,
-    lng: place.lng,
-    wikiTitle: place.wikiTitle,
-    context: place.sourceContext || ''
-  });
+  addHistory({ kind: 'place', topicTitle: selectedTopic.title, placeTitle: place.title, qid: place.qid, source: place.source, lat: place.lat, lng: place.lng, wikiTitle: place.wikiTitle, context: place.sourceContext || '' });
 }
 
 function renderMarkers() {
@@ -467,25 +453,21 @@ function openPlace(place) {
   for (const layer of markerLayer.getLayers()) {
     if (!layer.getLatLng) continue;
     const ll = layer.getLatLng();
-    if (Math.abs(ll.lat - place.lat) < 1e-8 && Math.abs(ll.lng - place.lng) < 1e-8) {
-      layer.openPopup();
-      break;
-    }
+    if (Math.abs(ll.lat - place.lat) < 1e-8 && Math.abs(ll.lng - place.lng) < 1e-8) { layer.openPopup(); break; }
   }
 }
 
 function renderRelatedList(items) {
   els.list.replaceChildren();
   els.count.textContent = `${items.length}件`;
-  if (!items.length) return renderPanelMessage('位置情報まで確認できる候補は見つかりませんでした。');
-
+  if (!items.length) return renderPanelMessage('本文中で関係を確認でき、位置情報もある候補は見つかりませんでした。');
   els.list.className = 'topic-list search-results';
   for (const place of items) {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'search-result';
     const sourceLabel = place.source === 'link' ? 'リンク' : '非リンク本文';
-    const context = place.sourceContext || (place.source === 'link' ? '記事内の該当箇所を取得できませんでした。' : '本文中の候補として検出されました。');
+    const context = place.sourceContext || '本文中の候補として検出されました。';
     row.innerHTML = `<span class="search-result-title">${escapeHtml(place.title)}</span><span class="search-result-context">${escapeHtml(context)}</span><span class="search-result-meta"><span class="search-result-badge">${sourceLabel}</span><span class="search-result-badge">位置情報あり</span></span>`;
     row.addEventListener('click', () => openPlace(place));
     els.list.append(row);
@@ -498,14 +480,12 @@ function renderHistory() {
   const history = readHistory();
   els.count.textContent = history.length ? `${history.length}件` : '';
   if (!history.length) return renderPanelMessage('まだ履歴はありません。トピックや地点を開くとここに残ります。');
-
   const clearButton = document.createElement('button');
   clearButton.type = 'button';
   clearButton.className = 'history-clear';
   clearButton.textContent = '履歴を消去';
   clearButton.addEventListener('click', () => { writeHistory([]); renderHistory(); });
   els.list.append(clearButton);
-
   for (const item of history) {
     const row = document.createElement('button');
     row.type = 'button';
@@ -558,9 +538,7 @@ function showTopics() {
   requestToken++;
   activeTab = 'topics';
   displayPlaces = selectedTopic ? localPlacesForTopic(selectedTopic) : places;
-  updateTabs();
-  renderTopics();
-  renderMarkers();
+  updateTabs(); renderTopics(); renderMarkers();
   setStatus(selectedTopic ? `${selectedTopic.title}：この範囲 ${displayPlaces.length}地点` : `${places.length}地点・${topics.length}トピック`);
 }
 function selectTopic(topic) {
@@ -571,9 +549,7 @@ function selectTopic(topic) {
   els.selection.hidden = false;
   els.selectionText.textContent = topic.title;
   addHistory({ kind: 'topic', topicTitle: topic.title });
-  updateTabs();
-  renderTopics();
-  renderMarkers();
+  updateTabs(); renderTopics(); renderMarkers();
   setStatus(`${topic.title}：この範囲 ${displayPlaces.length}地点`);
 }
 function clearTopic() {
@@ -582,9 +558,7 @@ function clearTopic() {
   activeTab = 'topics';
   displayPlaces = places;
   els.selection.hidden = true;
-  updateTabs();
-  renderTopics();
-  renderMarkers();
+  updateTabs(); renderTopics(); renderMarkers();
   setStatus(`${places.length}地点を表示中`);
 }
 
@@ -606,8 +580,7 @@ async function loadArea() {
     setStatus(`${places.length}地点 / Wikipedia ${wikiCount}記事`);
     await enrichWikipediaLinks(places);
     topics = buildTopics(places);
-    renderTopics();
-    renderMarkers();
+    renderTopics(); renderMarkers();
     setStatus(`${places.length}地点・${topics.length}トピック`);
     els.sheet.classList.remove('has-results');
     void els.sheet.offsetWidth;
