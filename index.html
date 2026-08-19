@@ -66,11 +66,28 @@
     let observerTimer = 0;
 
     const typeRules = {
-      transport: ['鉄道駅','駅','停留場','停留所','バス停','バスターミナル','地下鉄駅','路面電車停留場','railway station','train station','bus stop','tram stop','metro station'],
-      place: ['行政区画','行政区域','都市','市町村','市','町','村','区','都道府県','国','国家','島','地方','地域','地理的地域','集落','地区','郡','大字','町丁','human settlement','administrative territorial entity','city','town','village','country','island','geographic region','district'],
-      date: ['年','暦日','日付','世紀','年代','year','calendar date','century','decade'],
-      org: ['企業','会社','株式会社','法人','組織','団体','学校','大学','銀行','事業者','鉄道事業者','company','business','organization','organisation','corporation','university','school','bank'],
-      common: ['概念','用語','現象','活動','学問分野','分野','ジャンル','職業','制度','思想','理論','技法','概念上','concept','term','phenomenon','activity','academic discipline','genre','occupation','system','theory']
+      transport: [
+        '鉄道駅','駅','停留場','停留所','バス停','バスターミナル','地下鉄駅','路面電車停留場',
+        '鉄道路線','地下鉄路線','路線','道路','街路','国道','県道','高速道路','バス路線','交通機関',
+        'railway station','train station','bus stop','tram stop','metro station','railway line','rapid transit line',
+        'road','street','highway','bus route','transport'
+      ],
+      place: [
+        '行政区画','行政区域','行政区','都市','市町村','市','町','村','区','都道府県','県','国','国家','島','地方','地域',
+        '地理的地域','集落','地区','郡','大字','町丁','町・字','近隣住区','住宅地','村落','地名','場所',
+        'human settlement','administrative territorial entity','administrative division','ward','city','town','village',
+        'prefecture','country','island','geographic region','district','neighborhood','locality','place'
+      ],
+      date: ['年','暦日','日付','世紀','年代','元号','時代区分','year','calendar date','century','decade','era'],
+      org: [
+        '企業','会社','株式会社','法人','組織','団体','学校','大学','銀行','事業者','鉄道事業者','病院','新聞社','出版社',
+        'company','business','organization','organisation','corporation','university','school','bank','hospital','publisher'
+      ],
+      common: [
+        '概念','用語','現象','活動','学問分野','分野','ジャンル','職業','制度','思想','理論','技法','単位','識別子','コード',
+        '一覧','座標系','郵便番号','concept','term','phenomenon','activity','academic discipline','genre','occupation',
+        'system','theory','unit','identifier','code','list','coordinate system','postal code'
+      ]
     };
 
     function topicTitleFromChip(chip){
@@ -78,7 +95,17 @@
     }
     function obviousCategory(title){
       if (/^(?:\d{3,4}年|\d{1,2}月\d{1,2}日|\d{1,2}月|\d{1,2}日|\d{1,2}世紀|\d{3,4}年代)$/.test(title)) return 'date';
-      if (/(?:駅|停留場|バス停|バスターミナル)$/.test(title)) return 'transport';
+      if (/^(?:明治|大正|昭和|平成|令和)(?:\d+年?)?$/.test(title)) return 'date';
+
+      if (/(?:駅|停留場|停留所|バス停|バスターミナル|鉄道路線|地下鉄|鉄道線|本線|支線|国道\d*号?|県道|高速道路|自動車道|道路|通り|街道)$/.test(title)) return 'transport';
+      if (/(?:市営地下鉄|地下鉄|西鉄バス|市バス|鉄道)$/.test(title)) return 'transport';
+
+      if (/\((?:福岡市|福岡県|[^)]+市|[^)]+県|[^)]+区|[^)]+町|[^)]+村)\)$/.test(title)) return 'place';
+      if (/(?:都|道|府|県|市|区|町|村|郡|地方|地区|地域|島|半島|山|川|河|湾|浜|岬)$/.test(title) && !/(?:会社|大学|学校|病院)$/.test(title)) return 'place';
+
+      if (/(?:株式会社|有限会社|会社|銀行|大学|学校|中学校|高等学校|小学校|病院|新聞社|放送局|協会|財団|法人)$/.test(title)) return 'org';
+
+      if (/^(?:ISBN(?: \(識別子\))?|UTC(?:[+-]\d+)?|メートル|地理座標系|日本の郵便番号|学校コード|国の一覧|道路|都市計画|用途地域)$/.test(title)) return 'common';
       return null;
     }
     function labelCategory(labels){
@@ -101,6 +128,7 @@
         const obvious = obviousCategory(title);
         if(obvious) result.set(title, obvious); else unresolved.push(title);
       }
+
       for(let i=0;i<unresolved.length;i+=45){
         const batch = unresolved.slice(i,i+45);
         const p = new URLSearchParams({action:'query',format:'json',origin:'*',prop:'pageprops',ppprop:'wikibase_item',redirects:'1',titles:batch.join('|')});
@@ -117,34 +145,65 @@
           const qid = page.pageprops?.wikibase_item;
           if(qid) qidToOriginal.set(qid, original); else result.set(original,'other');
         }
+
         const qids = [...qidToOriginal.keys()];
         if(!qids.length) continue;
         const ep = new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:qids.join('|'),props:'claims'});
         let entities;
         try { entities = await fetchJson('https://www.wikidata.org/w/api.php?' + ep); }
         catch(_) { qids.forEach(q => result.set(qidToOriginal.get(q),'other')); continue; }
+
         const typeIds = new Set();
         const itemTypes = new Map();
         for(const qid of qids){
           const ids = (entities.entities?.[qid]?.claims?.P31 || []).map(c => c.mainsnak?.datavalue?.value?.id).filter(Boolean);
-          itemTypes.set(qid, ids); ids.forEach(id => typeIds.add(id));
+          itemTypes.set(qid, ids);
+          ids.forEach(id => typeIds.add(id));
         }
+
         const typeLabels = new Map();
+        const parentIds = new Set();
         const allTypes = [...typeIds];
         for(let j=0;j<allTypes.length;j+=45){
           const ids = allTypes.slice(j,j+45);
+          const lp = new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:ids.join('|'),props:'labels|claims',languages:'ja|en'});
+          try {
+            const ld = await fetchJson('https://www.wikidata.org/w/api.php?' + lp);
+            for(const id of ids){
+              const e = ld.entities?.[id];
+              const labels = [e?.labels?.ja?.value,e?.labels?.en?.value].filter(Boolean);
+              const parents = (e?.claims?.P279 || []).map(c => c.mainsnak?.datavalue?.value?.id).filter(Boolean);
+              parents.forEach(p => parentIds.add(p));
+              typeLabels.set(id,{labels,parents});
+            }
+          } catch(_) {}
+        }
+
+        const parentLabels = new Map();
+        const allParents = [...parentIds];
+        for(let j=0;j<allParents.length;j+=45){
+          const ids = allParents.slice(j,j+45);
           const lp = new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:ids.join('|'),props:'labels',languages:'ja|en'});
           try {
             const ld = await fetchJson('https://www.wikidata.org/w/api.php?' + lp);
             for(const id of ids){
               const e = ld.entities?.[id];
-              typeLabels.set(id,[e?.labels?.ja?.value,e?.labels?.en?.value].filter(Boolean));
+              parentLabels.set(id,[e?.labels?.ja?.value,e?.labels?.en?.value].filter(Boolean));
             }
           } catch(_) {}
         }
+
         for(const qid of qids){
-          const labels = (itemTypes.get(qid) || []).flatMap(id => typeLabels.get(id) || []);
-          result.set(qidToOriginal.get(qid), labelCategory(labels));
+          const labels = [];
+          for(const id of itemTypes.get(qid) || []){
+            const info = typeLabels.get(id);
+            if(!info) continue;
+            labels.push(...info.labels);
+            for(const parent of info.parents) labels.push(...(parentLabels.get(parent) || []));
+          }
+          const original = qidToOriginal.get(qid);
+          const typeCategory = labelCategory(labels);
+          result.set(original, typeCategory !== 'other' ? typeCategory : (obviousCategory(original) || 'other'));
         }
       }
       return result;
@@ -158,37 +217,53 @@
       filterBar.hidden = false;
       const chips = [...topicList.querySelectorAll('.topic-chip')];
       let visible = 0;
+      let classified = 0;
       for(const chip of chips){
-        const cat = chip.dataset.topicCategory || 'other';
-        const show = cat === 'other' || !!state[cat];
+        const cat = chip.dataset.topicCategory || 'pending';
+        const isClassified = cat !== 'pending';
+        if(isClassified) classified++;
+        const show = isClassified && (cat === 'other' || !!state[cat]);
         chip.hidden = !show;
         if(show) visible++;
       }
-      if(chips.length) sheetCount.textContent = `${visible}/${chips.length}`;
+      if(chips.length){
+        sheetCount.textContent = classified < chips.length ? `${visible} / 分類中 ${classified}/${chips.length}` : `${visible}/${chips.length}`;
+      }
     }
+
     async function classifyCurrentTopics(){
       if(!isTopicsTab()) { applyVisibility(); return; }
       const chips = [...topicList.querySelectorAll('.topic-chip')];
       if(!chips.length) { applyVisibility(); return; }
       const myRun = ++classifyRun;
       const needed = [];
+
       for(const chip of chips){
         const title = topicTitleFromChip(chip);
         chip.dataset.topicTitle = title;
         if(categoryCache.has(title)) chip.dataset.topicCategory = categoryCache.get(title);
-        else needed.push(title);
+        else {
+          chip.dataset.topicCategory = 'pending';
+          needed.push(title);
+        }
       }
       applyVisibility();
       if(!needed.length) return;
-      const categories = await fetchTypeLabels([...new Set(needed)]);
+
+      const unique = [...new Set(needed)];
+      const categories = await fetchTypeLabels(unique);
       if(myRun !== classifyRun) return;
       for(const [title,cat] of categories) categoryCache.set(title,cat);
+      for(const title of unique){
+        if(!categoryCache.has(title)) categoryCache.set(title, obviousCategory(title) || 'other');
+      }
       for(const chip of chips){
         const title = chip.dataset.topicTitle || topicTitleFromChip(chip);
         chip.dataset.topicCategory = categoryCache.get(title) || 'other';
       }
       applyVisibility();
     }
+
     function scheduleClassify(){
       clearTimeout(observerTimer);
       observerTimer = setTimeout(classifyCurrentTopics,120);
@@ -201,9 +276,11 @@
       button.setAttribute('aria-pressed',String(state[cat]));
       applyVisibility();
     }));
+
     document.querySelectorAll('.sheet-tab').forEach(tab => tab.addEventListener('click',() => setTimeout(() => {
       if(tab.dataset.tab === 'topics') scheduleClassify(); else filterBar.hidden = true;
     },0)));
+
     new MutationObserver(scheduleClassify).observe(topicList,{childList:true});
     scheduleClassify();
   })();
