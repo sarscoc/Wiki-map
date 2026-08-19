@@ -12,8 +12,7 @@
 <body>
   <main class="app-shell">
     <div id="map" aria-label="Wiki Map"></div>
-    <div class="top-bar"><div class="brand">Wiki Map</div><div id="status" class="status">地図を動かして読み込んでください</div></div>
-    <button id="loadAreaButton" class="load-button" type="button">この範囲を読み込む</button>
+    <div class="top-bar"><div class="brand">Wiki Map</div><button id="loadAreaButton" class="load-button" type="button">この範囲を読み込む</button><div id="status" class="status">地図を動かして読み込んでください</div></div>
     <section id="topicSheet" class="topic-sheet" aria-live="polite">
       <button id="sheetHandle" class="sheet-handle" type="button" aria-expanded="false"><span class="grabber" aria-hidden="true"></span><span id="sheetTitle">この周辺のトピック</span><span id="sheetCount" class="sheet-count"></span></button>
       <div class="sheet-tabs" role="tablist" aria-label="表示内容"><button class="sheet-tab active" type="button" data-tab="topics" role="tab" aria-selected="true">トピック</button><button class="sheet-tab" type="button" data-tab="links" role="tab" aria-selected="false" disabled>リンク</button><button class="sheet-tab" type="button" data-tab="text" role="tab" aria-selected="false" disabled>テキスト候補</button><button class="sheet-tab" type="button" data-tab="history" role="tab" aria-selected="false">履歴</button></div>
