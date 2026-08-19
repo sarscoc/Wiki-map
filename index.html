@@ -53,5 +53,34 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="app.js"></script>
+  <script>
+  // 歴史散歩で重要な「場所」は、行政地名フィルターに巻き込まない。
+  (() => {
+    const protectedTitlePattern = /(?:神社|神宮|大社|宮|寺|寺院|院|堂|城|城跡|城址|史跡|遺跡|古墳|公園|庭園|博物館|美術館|資料館|記念館|墓地|墓所|霊園|塔|門|櫓|砦|館跡|屋敷跡)$/;
+    const protectedTypes = new Set([
+      '神社','神宮','神道の神社','神道施設','寺院','仏教寺院','城','城郭','城跡','史跡','遺跡','考古遺跡','古墳','公園','庭園','博物館','美術館','墓地','墓所','宗教施設','宗教建築物','建築物','歴史的建築物',
+      'shinto shrine','shrine','buddhist temple','temple','castle','castle ruin','historic site','historical site','archaeological site','kofun','park','garden','museum','art museum','cemetery','burial ground','religious building','religious facility','historic building'
+    ].map(v => v.toLowerCase()));
+
+    const originalObviousCategory = obviousCategory;
+    obviousCategory = function(title) {
+      if (protectedTitlePattern.test(title)) return 'other';
+      return originalObviousCategory(title);
+    };
+
+    const originalCategoryFromLabels = categoryFromLabels;
+    categoryFromLabels = function(labels) {
+      const normalized = labels.map(value => String(value).trim().toLowerCase());
+      if (normalized.some(value => protectedTypes.has(value))) return 'other';
+      return originalCategoryFromLabels(labels);
+    };
+
+    // 以前「地名」と誤分類された歴史施設だけキャッシュから外す。
+    for (const [title, category] of [...typeCache]) {
+      if (category === 'place' && protectedTitlePattern.test(title)) typeCache.delete(title);
+    }
+    saveTypeCache();
+  })();
+  </script>
 </body>
 </html>
