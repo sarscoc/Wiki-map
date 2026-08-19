@@ -34,6 +34,15 @@
         <button class="sheet-tab" type="button" data-tab="history" role="tab" aria-selected="false">履歴</button>
       </div>
 
+      <div id="topicFilters" class="topic-filters" aria-label="トピック表示フィルター">
+        <span class="topic-filter-label">SHOW</span>
+        <button type="button" class="topic-filter" data-category="transport" aria-pressed="false">交通</button>
+        <button type="button" class="topic-filter" data-category="place" aria-pressed="false">地名</button>
+        <button type="button" class="topic-filter" data-category="date" aria-pressed="false">日付</button>
+        <button type="button" class="topic-filter" data-category="org" aria-pressed="false">企業・団体</button>
+        <button type="button" class="topic-filter" data-category="common" aria-pressed="false">普通名詞</button>
+      </div>
+
       <div id="topicList" class="topic-list"></div>
 
       <div id="selectionBar" class="selection-bar" hidden>
@@ -45,5 +54,159 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="app.js"></script>
+  <script>
+  (() => {
+    const filterBar = document.getElementById('topicFilters');
+    const topicList = document.getElementById('topicList');
+    const sheetCount = document.getElementById('sheetCount');
+    const filterButtons = [...document.querySelectorAll('.topic-filter')];
+    const state = {transport:false,place:false,date:false,org:false,common:false};
+    const categoryCache = new Map();
+    let classifyRun = 0;
+    let observerTimer = 0;
+
+    const typeRules = {
+      transport: ['鉄道駅','駅','停留場','停留所','バス停','バスターミナル','地下鉄駅','路面電車停留場','railway station','train station','bus stop','tram stop','metro station'],
+      place: ['行政区画','行政区域','都市','市町村','市','町','村','区','都道府県','国','国家','島','地方','地域','地理的地域','集落','地区','郡','大字','町丁','human settlement','administrative territorial entity','city','town','village','country','island','geographic region','district'],
+      date: ['年','暦日','日付','世紀','年代','year','calendar date','century','decade'],
+      org: ['企業','会社','株式会社','法人','組織','団体','学校','大学','銀行','事業者','鉄道事業者','company','business','organization','organisation','corporation','university','school','bank'],
+      common: ['概念','用語','現象','活動','学問分野','分野','ジャンル','職業','制度','思想','理論','技法','概念上','concept','term','phenomenon','activity','academic discipline','genre','occupation','system','theory']
+    };
+
+    function topicTitleFromChip(chip){
+      return chip.textContent.replace(/\s+\d+\s*$/, '').trim();
+    }
+    function obviousCategory(title){
+      if (/^(?:\d{3,4}年|\d{1,2}月\d{1,2}日|\d{1,2}月|\d{1,2}日|\d{1,2}世紀|\d{3,4}年代)$/.test(title)) return 'date';
+      if (/(?:駅|停留場|バス停|バスターミナル)$/.test(title)) return 'transport';
+      return null;
+    }
+    function labelCategory(labels){
+      const text = labels.join(' ').toLowerCase();
+      for (const cat of ['transport','date','org','place','common']) {
+        if (typeRules[cat].some(word => text.includes(word.toLowerCase()))) return cat;
+      }
+      return 'other';
+    }
+
+    async function fetchJson(url){
+      const r = await fetch(url);
+      if(!r.ok) throw new Error(r.status);
+      return r.json();
+    }
+    async function fetchTypeLabels(titles){
+      const result = new Map();
+      const unresolved = [];
+      for(const title of titles){
+        const obvious = obviousCategory(title);
+        if(obvious) result.set(title, obvious); else unresolved.push(title);
+      }
+      for(let i=0;i<unresolved.length;i+=45){
+        const batch = unresolved.slice(i,i+45);
+        const p = new URLSearchParams({action:'query',format:'json',origin:'*',prop:'pageprops',ppprop:'wikibase_item',redirects:'1',titles:batch.join('|')});
+        let data;
+        try { data = await fetchJson('https://ja.wikipedia.org/w/api.php?' + p); }
+        catch(_) { batch.forEach(t => result.set(t,'other')); continue; }
+
+        const alias = new Map(batch.map(t => [t,t]));
+        for(const n of data.query?.normalized || []) alias.set(n.to, alias.get(n.from) || n.from);
+        for(const r of data.query?.redirects || []) alias.set(r.to, alias.get(r.from) || r.from);
+        const qidToOriginal = new Map();
+        for(const page of Object.values(data.query?.pages || {})){
+          const original = alias.get(page.title) || page.title;
+          const qid = page.pageprops?.wikibase_item;
+          if(qid) qidToOriginal.set(qid, original); else result.set(original,'other');
+        }
+        const qids = [...qidToOriginal.keys()];
+        if(!qids.length) continue;
+        const ep = new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:qids.join('|'),props:'claims'});
+        let entities;
+        try { entities = await fetchJson('https://www.wikidata.org/w/api.php?' + ep); }
+        catch(_) { qids.forEach(q => result.set(qidToOriginal.get(q),'other')); continue; }
+        const typeIds = new Set();
+        const itemTypes = new Map();
+        for(const qid of qids){
+          const ids = (entities.entities?.[qid]?.claims?.P31 || []).map(c => c.mainsnak?.datavalue?.value?.id).filter(Boolean);
+          itemTypes.set(qid, ids); ids.forEach(id => typeIds.add(id));
+        }
+        const typeLabels = new Map();
+        const allTypes = [...typeIds];
+        for(let j=0;j<allTypes.length;j+=45){
+          const ids = allTypes.slice(j,j+45);
+          const lp = new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:ids.join('|'),props:'labels',languages:'ja|en'});
+          try {
+            const ld = await fetchJson('https://www.wikidata.org/w/api.php?' + lp);
+            for(const id of ids){
+              const e = ld.entities?.[id];
+              typeLabels.set(id,[e?.labels?.ja?.value,e?.labels?.en?.value].filter(Boolean));
+            }
+          } catch(_) {}
+        }
+        for(const qid of qids){
+          const labels = (itemTypes.get(qid) || []).flatMap(id => typeLabels.get(id) || []);
+          result.set(qidToOriginal.get(qid), labelCategory(labels));
+        }
+      }
+      return result;
+    }
+
+    function isTopicsTab(){
+      return document.querySelector('.sheet-tab.active')?.dataset.tab === 'topics';
+    }
+    function applyVisibility(){
+      if(!isTopicsTab()) { filterBar.hidden = true; return; }
+      filterBar.hidden = false;
+      const chips = [...topicList.querySelectorAll('.topic-chip')];
+      let visible = 0;
+      for(const chip of chips){
+        const cat = chip.dataset.topicCategory || 'other';
+        const show = cat === 'other' || !!state[cat];
+        chip.hidden = !show;
+        if(show) visible++;
+      }
+      if(chips.length) sheetCount.textContent = `${visible}/${chips.length}`;
+    }
+    async function classifyCurrentTopics(){
+      if(!isTopicsTab()) { applyVisibility(); return; }
+      const chips = [...topicList.querySelectorAll('.topic-chip')];
+      if(!chips.length) { applyVisibility(); return; }
+      const myRun = ++classifyRun;
+      const needed = [];
+      for(const chip of chips){
+        const title = topicTitleFromChip(chip);
+        chip.dataset.topicTitle = title;
+        if(categoryCache.has(title)) chip.dataset.topicCategory = categoryCache.get(title);
+        else needed.push(title);
+      }
+      applyVisibility();
+      if(!needed.length) return;
+      const categories = await fetchTypeLabels([...new Set(needed)]);
+      if(myRun !== classifyRun) return;
+      for(const [title,cat] of categories) categoryCache.set(title,cat);
+      for(const chip of chips){
+        const title = chip.dataset.topicTitle || topicTitleFromChip(chip);
+        chip.dataset.topicCategory = categoryCache.get(title) || 'other';
+      }
+      applyVisibility();
+    }
+    function scheduleClassify(){
+      clearTimeout(observerTimer);
+      observerTimer = setTimeout(classifyCurrentTopics,120);
+    }
+
+    filterButtons.forEach(button => button.addEventListener('click', () => {
+      const cat = button.dataset.category;
+      state[cat] = !state[cat];
+      button.classList.toggle('active',state[cat]);
+      button.setAttribute('aria-pressed',String(state[cat]));
+      applyVisibility();
+    }));
+    document.querySelectorAll('.sheet-tab').forEach(tab => tab.addEventListener('click',() => setTimeout(() => {
+      if(tab.dataset.tab === 'topics') scheduleClassify(); else filterBar.hidden = true;
+    },0)));
+    new MutationObserver(scheduleClassify).observe(topicList,{childList:true});
+    scheduleClassify();
+  })();
+  </script>
 </body>
 </html>
