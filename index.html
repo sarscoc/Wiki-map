@@ -24,6 +24,41 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="app.js"></script>
   <script>
+  // app.js の座標照合で、正規化・リダイレクト後も元リンクの文脈を引き継ぐ。
+  coordinatesForTitles = async function(titles, source, topicTitle, token, contextMap = new Map()) {
+    const found = [];
+    for (let i = 0; i < titles.length; i += 50) {
+      if (token !== requestToken) return [];
+      const batch = titles.slice(i, i + 50);
+      setStatus(`${topicTitle}：${source === 'link' ? 'リンク' : 'テキスト候補'}を照合中 ${Math.min(i + batch.length, titles.length)}/${titles.length}`);
+      const params = new URLSearchParams({ action:'query', format:'json', origin:'*', prop:'coordinates|pageprops', ppprop:'wikibase_item', colimit:'max', redirects:'1', titles:batch.join('|') });
+      const data = await fetchJson('https://ja.wikipedia.org/w/api.php?' + params);
+
+      const originalFor = new Map(batch.map(title => [title, title]));
+      for (const n of data.query?.normalized || []) originalFor.set(n.to, originalFor.get(n.from) || n.from);
+      for (const r of data.query?.redirects || []) originalFor.set(r.to, originalFor.get(r.from) || r.from);
+
+      for (const page of Object.values(data.query?.pages || {})) {
+        const c = page.coordinates?.[0];
+        if (!c) continue;
+        const originalTitle = originalFor.get(page.title) || page.title;
+        const context = contextMap.get(page.title) || contextMap.get(originalTitle) || '';
+        found.push({
+          qid: page.pageprops?.wikibase_item || `page-${page.pageid}`,
+          title: page.title,
+          lat: c.lat,
+          lng: c.lon,
+          wikiTitle: page.title,
+          source,
+          sourceContext: context
+        });
+      }
+      if (i + 50 < titles.length) await sleep(30);
+    }
+    return dedupePlaces(found);
+  };
+  </script>
+  <script>
   (()=>{
     const list=document.getElementById('topicList'),count=document.getElementById('sheetCount'),filters=document.getElementById('topicFilters'),buttons=[...document.querySelectorAll('.topic-filter')];
     const state={transit_stop:false,route:false,numbered_road:false,transit_operator:false,place:false,date:false,org:false,common:false};
