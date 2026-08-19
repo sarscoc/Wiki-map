@@ -12,28 +12,23 @@
 <body>
   <main class="app-shell">
     <div id="map" aria-label="Wiki Map"></div>
-
     <div class="top-bar">
       <div class="brand">Wiki Map</div>
       <div id="status" class="status">地図を動かして読み込んでください</div>
     </div>
-
     <button id="loadAreaButton" class="load-button" type="button">この範囲を読み込む</button>
-
     <section id="topicSheet" class="topic-sheet" aria-live="polite">
       <button id="sheetHandle" class="sheet-handle" type="button" aria-expanded="false">
         <span class="grabber" aria-hidden="true"></span>
         <span id="sheetTitle">この周辺のトピック</span>
         <span id="sheetCount" class="sheet-count"></span>
       </button>
-
       <div class="sheet-tabs" role="tablist" aria-label="表示内容">
         <button class="sheet-tab active" type="button" data-tab="topics" role="tab" aria-selected="true">トピック</button>
         <button class="sheet-tab" type="button" data-tab="links" role="tab" aria-selected="false" disabled>リンク</button>
         <button class="sheet-tab" type="button" data-tab="text" role="tab" aria-selected="false" disabled>テキスト候補</button>
         <button class="sheet-tab" type="button" data-tab="history" role="tab" aria-selected="false">履歴</button>
       </div>
-
       <div id="topicFilters" class="topic-filters" aria-label="トピック表示フィルター">
         <span class="topic-filter-label">SHOW</span>
         <button type="button" class="topic-filter" data-category="transport" aria-pressed="false">交通</button>
@@ -42,16 +37,13 @@
         <button type="button" class="topic-filter" data-category="org" aria-pressed="false">企業・団体</button>
         <button type="button" class="topic-filter" data-category="common" aria-pressed="false">普通名詞</button>
       </div>
-
       <div id="topicList" class="topic-list"></div>
-
       <div id="selectionBar" class="selection-bar" hidden>
         <span id="selectionText"></span>
         <button id="clearSelectionButton" class="selection-close" type="button" aria-label="トピック選択を解除">×</button>
       </div>
     </section>
   </main>
-
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="app.js"></script>
   <script>
@@ -61,11 +53,11 @@
     const sheetCount = document.getElementById('sheetCount');
     const filterButtons = [...document.querySelectorAll('.topic-filter')];
     const state = { transport:false, place:false, date:false, org:false, common:false };
-    const MEMORY_KEY = 'wiki-map-topic-types-v2';
+    const MEMORY_KEY = 'wiki-map-topic-types-v3';
     const categoryCache = new Map();
-    let queue = [];
+    const queued = new Set();
+    const queue = [];
     let queueRunning = false;
-    let queueVersion = 0;
     let mutationTimer = 0;
 
     try {
@@ -81,14 +73,8 @@
       common: ['概念','用語','現象','活動','学問分野','分野','ジャンル','職業','制度','思想','理論','技法','単位','識別子','コード','一覧','座標系','郵便番号','concept','term','phenomenon','activity','academic discipline','genre','occupation','system','theory','unit','identifier','code','list','coordinate system','postal code']
     };
 
-    function isTopicsTab(){
-      return document.querySelector('.sheet-tab.active')?.dataset.tab === 'topics';
-    }
-
-    function topicTitleFromChip(chip){
-      return chip.textContent.replace(/\s+\d+\s*$/, '').trim();
-    }
-
+    function isTopicsTab(){ return document.querySelector('.sheet-tab.active')?.dataset.tab === 'topics'; }
+    function topicTitleFromChip(chip){ return chip.textContent.replace(/\s+\d+\s*$/, '').trim(); }
     function obviousCategory(title){
       if (/^(?:\d{3,4}年|\d{1,2}月\d{1,2}日|\d{1,2}月|\d{1,2}日|\d{1,2}世紀|\d{3,4}年代)$/.test(title)) return 'date';
       if (/^(?:明治|大正|昭和|平成|令和)(?:\d+年?)?$/.test(title)) return 'date';
@@ -100,7 +86,6 @@
       if (/^(?:ISBN(?: \(識別子\))?|UTC(?:[+-]\d+)?|メートル|地理座標系|日本の郵便番号|学校コード|国の一覧|都市計画|用途地域)$/.test(title)) return 'common';
       return null;
     }
-
     function labelCategory(labels){
       const text = labels.join(' ').toLowerCase();
       for (const cat of ['transport','date','org','place','common']) {
@@ -108,24 +93,16 @@
       }
       return 'other';
     }
-
     function saveCache(){
       try {
         const obj = {};
         let n = 0;
-        for (const [title, cat] of categoryCache) {
-          obj[title] = cat;
-          if (++n >= 5000) break;
-        }
+        for (const [title, cat] of categoryCache) { obj[title] = cat; if (++n >= 5000) break; }
         localStorage.setItem(MEMORY_KEY, JSON.stringify(obj));
       } catch (_) {}
     }
-
     function applyVisibility(){
-      if (!isTopicsTab()) {
-        filterBar.hidden = true;
-        return;
-      }
+      if (!isTopicsTab()) { filterBar.hidden = true; return; }
       filterBar.hidden = false;
       const chips = [...topicList.querySelectorAll('.topic-chip')];
       let visible = 0;
@@ -135,42 +112,31 @@
         chip.hidden = !show;
         if (show) visible++;
       }
-      if (chips.length) {
-        sheetCount.textContent = queueRunning ? `${visible}/${chips.length} · 型確認中` : `${visible}/${chips.length}`;
-      }
+      if (chips.length) sheetCount.textContent = queueRunning ? `${visible}/${chips.length} · 型確認中` : `${visible}/${chips.length}`;
     }
-
     function prepareTopics(){
       if (!isTopicsTab()) return;
       const chips = [...topicList.querySelectorAll('.topic-chip')];
       if (!chips.length) return;
-      const unresolved = [];
       for (const chip of chips) {
         const title = topicTitleFromChip(chip);
         chip.dataset.topicTitle = title;
-        let cat = categoryCache.get(title);
-        if (!cat) {
-          cat = obviousCategory(title);
-          if (cat) categoryCache.set(title, cat);
-        }
+        let cat = categoryCache.get(title) || obviousCategory(title);
+        if (cat) categoryCache.set(title, cat);
         chip.dataset.topicCategory = cat || 'other';
-        if (!cat) unresolved.push(title);
+        if (!cat && !queued.has(title)) { queued.add(title); queue.push(title); }
       }
       applyVisibility();
-      startLazyClassification([...new Set(unresolved)]);
+      runQueue();
     }
-
     async function fetchJson(url){
       const response = await fetch(url);
       if (!response.ok) throw new Error(String(response.status));
       return response.json();
     }
-
     async function classifyBatch(titles){
       const result = new Map();
-      const pageParams = new URLSearchParams({
-        action:'query', format:'json', origin:'*', prop:'pageprops', ppprop:'wikibase_item', redirects:'1', titles:titles.join('|')
-      });
+      const pageParams = new URLSearchParams({action:'query',format:'json',origin:'*',prop:'pageprops',ppprop:'wikibase_item',redirects:'1',titles:titles.join('|')});
       const pages = await fetchJson('https://ja.wikipedia.org/w/api.php?' + pageParams);
       const alias = new Map(titles.map(t => [t,t]));
       for (const n of pages.query?.normalized || []) alias.set(n.to, alias.get(n.from) || n.from);
@@ -179,65 +145,48 @@
       for (const page of Object.values(pages.query?.pages || {})) {
         const original = alias.get(page.title) || page.title;
         const qid = page.pageprops?.wikibase_item;
-        if (qid) qidMap.set(qid, original);
-        else result.set(original, 'other');
+        if (qid) qidMap.set(qid, original); else result.set(original, 'other');
       }
       const qids = [...qidMap.keys()];
       if (!qids.length) return result;
-
-      const entityParams = new URLSearchParams({ action:'wbgetentities', format:'json', origin:'*', ids:qids.join('|'), props:'claims' });
+      const entityParams = new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:qids.join('|'),props:'claims'});
       const entities = await fetchJson('https://www.wikidata.org/w/api.php?' + entityParams);
       const typeIds = new Set();
       const itemTypes = new Map();
       for (const qid of qids) {
         const ids = (entities.entities?.[qid]?.claims?.P31 || []).map(c => c.mainsnak?.datavalue?.value?.id).filter(Boolean);
-        itemTypes.set(qid, ids);
-        ids.forEach(id => typeIds.add(id));
+        itemTypes.set(qid, ids); ids.forEach(id => typeIds.add(id));
       }
-
       const labels = new Map();
       const ids = [...typeIds];
       for (let i=0;i<ids.length;i+=50) {
         const part = ids.slice(i,i+50);
-        const labelParams = new URLSearchParams({ action:'wbgetentities', format:'json', origin:'*', ids:part.join('|'), props:'labels', languages:'ja|en' });
+        const labelParams = new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:part.join('|'),props:'labels',languages:'ja|en'});
         const data = await fetchJson('https://www.wikidata.org/w/api.php?' + labelParams);
         for (const id of part) {
           const e = data.entities?.[id];
           labels.set(id, [e?.labels?.ja?.value,e?.labels?.en?.value].filter(Boolean));
         }
       }
-
       for (const qid of qids) {
         const typeLabels = (itemTypes.get(qid) || []).flatMap(id => labels.get(id) || []);
-        const title = qidMap.get(qid);
-        result.set(title, labelCategory(typeLabels));
+        result.set(qidMap.get(qid), labelCategory(typeLabels));
       }
       return result;
     }
-
     function refreshChipCategories(changedTitles){
-      if (!changedTitles.size) return;
       for (const chip of topicList.querySelectorAll('.topic-chip')) {
         const title = chip.dataset.topicTitle || topicTitleFromChip(chip);
         if (changedTitles.has(title)) chip.dataset.topicCategory = categoryCache.get(title) || 'other';
       }
       applyVisibility();
     }
-
-    async function startLazyClassification(titles){
-      const myVersion = ++queueVersion;
-      queue = titles.filter(title => !categoryCache.has(title));
-      if (!queue.length) {
-        queueRunning = false;
-        applyVisibility();
-        return;
-      }
-      if (queueRunning) return;
+    async function runQueue(){
+      if (queueRunning || !queue.length) return;
       queueRunning = true;
       applyVisibility();
-
-      while (queue.length && myVersion === queueVersion) {
-        const batch = queue.splice(0, 25);
+      while (queue.length) {
+        const batch = queue.splice(0, 20);
         const changed = new Set();
         try {
           const result = await classifyBatch(batch);
@@ -247,18 +196,15 @@
             changed.add(title);
           }
         } catch (_) {
-          // 通信失敗時は表示を止めず、後の再読み込みで再判定する。
+          for (const title of batch) queued.delete(title);
         }
         refreshChipCategories(changed);
-        await new Promise(resolve => setTimeout(resolve, 120));
+        await new Promise(resolve => setTimeout(resolve, 180));
       }
-      if (myVersion === queueVersion) {
-        queueRunning = false;
-        saveCache();
-        applyVisibility();
-      }
+      queueRunning = false;
+      saveCache();
+      applyVisibility();
     }
-
     filterButtons.forEach(button => {
       button.addEventListener('click', () => {
         const cat = button.dataset.category;
@@ -268,25 +214,16 @@
         applyVisibility();
       });
     });
-
     document.querySelectorAll('.sheet-tab').forEach(tab => {
       tab.addEventListener('click', () => setTimeout(() => {
-        if (tab.dataset.tab === 'topics') {
-          filterBar.hidden = false;
-          prepareTopics();
-        } else {
-          filterBar.hidden = true;
-        }
+        if (tab.dataset.tab === 'topics') { filterBar.hidden = false; prepareTopics(); }
+        else filterBar.hidden = true;
       }, 0));
     });
-
     new MutationObserver(() => {
       clearTimeout(mutationTimer);
-      mutationTimer = setTimeout(() => {
-        if (isTopicsTab()) prepareTopics();
-      }, 50);
-    }).observe(topicList, { childList:true });
-
+      mutationTimer = setTimeout(() => { if (isTopicsTab()) prepareTopics(); }, 80);
+    }).observe(topicList, {childList:true});
     setTimeout(prepareTopics, 100);
   })();
   </script>
