@@ -12,219 +12,61 @@
 <body>
   <main class="app-shell">
     <div id="map" aria-label="Wiki Map"></div>
-    <div class="top-bar">
-      <div class="brand">Wiki Map</div>
-      <div id="status" class="status">地図を動かして読み込んでください</div>
-    </div>
+    <div class="top-bar"><div class="brand">Wiki Map</div><div id="status" class="status">地図を動かして読み込んでください</div></div>
     <button id="loadAreaButton" class="load-button" type="button">この範囲を読み込む</button>
     <section id="topicSheet" class="topic-sheet" aria-live="polite">
-      <button id="sheetHandle" class="sheet-handle" type="button" aria-expanded="false">
-        <span class="grabber" aria-hidden="true"></span>
-        <span id="sheetTitle">この周辺のトピック</span>
-        <span id="sheetCount" class="sheet-count"></span>
-      </button>
-      <div class="sheet-tabs" role="tablist" aria-label="表示内容">
-        <button class="sheet-tab active" type="button" data-tab="topics" role="tab" aria-selected="true">トピック</button>
-        <button class="sheet-tab" type="button" data-tab="links" role="tab" aria-selected="false" disabled>リンク</button>
-        <button class="sheet-tab" type="button" data-tab="text" role="tab" aria-selected="false" disabled>テキスト候補</button>
-        <button class="sheet-tab" type="button" data-tab="history" role="tab" aria-selected="false">履歴</button>
-      </div>
-      <div id="topicFilters" class="topic-filters" aria-label="トピック表示フィルター">
-        <span class="topic-filter-label">SHOW</span>
-        <button type="button" class="topic-filter" data-category="transport" aria-pressed="false">交通</button>
-        <button type="button" class="topic-filter" data-category="place" aria-pressed="false">地名</button>
-        <button type="button" class="topic-filter" data-category="date" aria-pressed="false">日付</button>
-        <button type="button" class="topic-filter" data-category="org" aria-pressed="false">企業・団体</button>
-        <button type="button" class="topic-filter" data-category="common" aria-pressed="false">普通名詞</button>
-      </div>
+      <button id="sheetHandle" class="sheet-handle" type="button" aria-expanded="false"><span class="grabber" aria-hidden="true"></span><span id="sheetTitle">この周辺のトピック</span><span id="sheetCount" class="sheet-count"></span></button>
+      <div class="sheet-tabs" role="tablist" aria-label="表示内容"><button class="sheet-tab active" type="button" data-tab="topics" role="tab" aria-selected="true">トピック</button><button class="sheet-tab" type="button" data-tab="links" role="tab" aria-selected="false" disabled>リンク</button><button class="sheet-tab" type="button" data-tab="text" role="tab" aria-selected="false" disabled>テキスト候補</button><button class="sheet-tab" type="button" data-tab="history" role="tab" aria-selected="false">履歴</button></div>
+      <div id="topicFilters" class="topic-filters" aria-label="トピック表示フィルター"><span class="topic-filter-label">SHOW</span><button type="button" class="topic-filter" data-category="transport" aria-pressed="false">交通</button><button type="button" class="topic-filter" data-category="place" aria-pressed="false">地名</button><button type="button" class="topic-filter" data-category="date" aria-pressed="false">日付</button><button type="button" class="topic-filter" data-category="org" aria-pressed="false">企業・団体</button><button type="button" class="topic-filter" data-category="common" aria-pressed="false">普通名詞</button></div>
       <div id="topicList" class="topic-list"></div>
-      <div id="selectionBar" class="selection-bar" hidden>
-        <span id="selectionText"></span>
-        <button id="clearSelectionButton" class="selection-close" type="button" aria-label="トピック選択を解除">×</button>
-      </div>
+      <div id="selectionBar" class="selection-bar" hidden><span id="selectionText"></span><button id="clearSelectionButton" class="selection-close" type="button" aria-label="トピック選択を解除">×</button></div>
     </section>
   </main>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="app.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script src="app.js"></script>
   <script>
-  (() => {
-    const filterBar = document.getElementById('topicFilters');
-    const topicList = document.getElementById('topicList');
-    const sheetCount = document.getElementById('sheetCount');
-    const filterButtons = [...document.querySelectorAll('.topic-filter')];
-    const state = { transport:false, place:false, date:false, org:false, common:false };
-    const MEMORY_KEY = 'wiki-map-topic-types-v3';
-    const categoryCache = new Map();
-    const queued = new Set();
-    const queue = [];
-    let queueRunning = false;
-    let mutationTimer = 0;
-
-    try {
-      const saved = JSON.parse(localStorage.getItem(MEMORY_KEY) || '{}');
-      for (const [title, cat] of Object.entries(saved)) categoryCache.set(title, cat);
-    } catch (_) {}
-
-    const typeRules = {
-      transport: ['鉄道駅','駅','停留場','停留所','バス停','バスターミナル','地下鉄駅','路面電車停留場','鉄道路線','地下鉄路線','道路','街路','国道','県道','高速道路','バス路線','railway station','train station','bus stop','tram stop','metro station','railway line','road','street','highway','bus route'],
-      place: ['行政区画','行政区域','行政区','都市','市町村','市','町','村','区','都道府県','県','国','国家','島','地方','地域','地理的地域','集落','地区','郡','大字','町丁','住宅地','地名','human settlement','administrative territorial entity','administrative division','ward','city','town','village','prefecture','country','island','geographic region','district','neighborhood','locality'],
-      date: ['年','暦日','日付','世紀','年代','元号','時代区分','year','calendar date','century','decade','era'],
-      org: ['企業','会社','株式会社','法人','組織','団体','学校','大学','銀行','事業者','鉄道事業者','病院','新聞社','出版社','company','business','organization','organisation','corporation','university','school','bank','hospital','publisher'],
-      common: ['概念','用語','現象','活動','学問分野','分野','ジャンル','職業','制度','思想','理論','技法','単位','識別子','コード','一覧','座標系','郵便番号','concept','term','phenomenon','activity','academic discipline','genre','occupation','system','theory','unit','identifier','code','list','coordinate system','postal code']
+  (()=>{
+    const filterBar=document.getElementById('topicFilters'),topicList=document.getElementById('topicList'),sheetCount=document.getElementById('sheetCount'),filterButtons=[...document.querySelectorAll('.topic-filter')];
+    const state={transport:false,place:false,date:false,org:false,common:false},MEMORY_KEY='wiki-map-topic-types-v4',categoryCache=new Map(),queued=new Set(),queue=[];let queueRunning=false,mutationTimer=0;
+    try{const saved=JSON.parse(localStorage.getItem(MEMORY_KEY)||'{}');for(const [t,c] of Object.entries(saved))categoryCache.set(t,c)}catch(_){}
+    const exactType={
+      transport:['鉄道駅','駅','停留場','停留所','バス停','バスターミナル','地下鉄駅','路面電車停留場','鉄道路線','地下鉄路線','道路','街路','国道','都道府県道','高速道路','バス路線','railway station','train station','bus stop','tram stop','metro station','railway line','road','street','highway','bus route'],
+      place:['行政区画','行政区域','行政区','都市','市町村','市','町','村','区','都道府県','県','国','国家','島','地方','地域','地理的地域','集落','地区','郡','大字','町丁','住宅地','地名','human settlement','administrative territorial entity','administrative division','ward','city','town','village','prefecture','country','island','geographic region','district','neighborhood','locality'],
+      date:['年','暦日','日付','世紀','年代','元号','時代区分','year','calendar date','century','decade','era'],
+      org:['企業','会社','株式会社','法人','組織','団体','学校','大学','銀行','事業者','鉄道事業者','病院','新聞社','出版社','company','business','organization','organisation','corporation','university','school','bank','hospital','publisher'],
+      common:['概念','用語','現象','活動','学問分野','分野','ジャンル','職業','制度','思想','理論','技法','単位','識別子','コード','一覧','座標系','郵便番号','concept','term','phenomenon','activity','academic discipline','genre','occupation','system','theory','unit','identifier','code','list','coordinate system','postal code']
     };
-
-    function isTopicsTab(){ return document.querySelector('.sheet-tab.active')?.dataset.tab === 'topics'; }
-    function topicTitleFromChip(chip){ return chip.textContent.replace(/\s+\d+\s*$/, '').trim(); }
-    function obviousCategory(title){
-      if (/^(?:\d{3,4}年|\d{1,2}月\d{1,2}日|\d{1,2}月|\d{1,2}日|\d{1,2}世紀|\d{3,4}年代)$/.test(title)) return 'date';
-      if (/^(?:明治|大正|昭和|平成|令和)(?:\d+年?)?$/.test(title)) return 'date';
-      if (/(?:駅|停留場|停留所|バス停|バスターミナル|地下鉄|鉄道線|本線|支線|国道\d*号?|県道|高速道路|自動車道|道路|通り|街道)$/.test(title)) return 'transport';
-      if (/(?:市営地下鉄|西鉄バス|市バス)$/.test(title)) return 'transport';
-      if (/\((?:[^)]+市|[^)]+県|[^)]+区|[^)]+町|[^)]+村)\)$/.test(title)) return 'place';
-      if (/(?:都|府|県|市|区|町|村|郡|地方|地区|地域)$/.test(title) && !/(?:会社|大学|学校|病院)$/.test(title)) return 'place';
-      if (/(?:株式会社|有限会社|会社|銀行|大学|学校|中学校|高等学校|小学校|病院|新聞社|放送局|協会|財団|法人)$/.test(title)) return 'org';
-      if (/^(?:ISBN(?: \(識別子\))?|UTC(?:[+-]\d+)?|メートル|地理座標系|日本の郵便番号|学校コード|国の一覧|都市計画|用途地域)$/.test(title)) return 'common';
-      return null;
+    const norm=s=>String(s||'').trim().toLowerCase();
+    function isTopicsTab(){return document.querySelector('.sheet-tab.active')?.dataset.tab==='topics'}
+    function topicTitleFromChip(chip){return chip.textContent.replace(/\s+\d+\s*$/,'').trim()}
+    function obviousCategory(t){
+      if(/^(?:\d{3,4}年|\d{1,2}月\d{1,2}日|\d{1,2}月|\d{1,2}日|\d{1,2}世紀|\d{3,4}年代)$/.test(t)||/^(?:明治|大正|昭和|平成|令和)(?:\d+年?)?$/.test(t))return'date';
+      if(/(?:駅|停留場|停留所|バス停|バスターミナル|地下鉄|鉄道線|本線|支線|国道\d*号?|県道|高速道路|自動車道|道路|通り|街道)$/.test(t)||/(?:市営地下鉄|西鉄バス|市バス)$/.test(t))return'transport';
+      if(/\((?:[^)]+市|[^)]+県|[^)]+区|[^)]+町|[^)]+村)\)$/.test(t)||(/(?:都|府|県|市|区|町|村|郡|地方|地区|地域)$/.test(t)&&!/(?:会社|大学|学校|病院)$/.test(t)))return'place';
+      if(/(?:株式会社|有限会社|会社|銀行|大学|学校|中学校|高等学校|小学校|病院|新聞社|放送局|協会|財団|法人)$/.test(t))return'org';
+      if(/^(?:ISBN(?: \(識別子\))?|UTC(?:[+-]\d+)?|メートル|地理座標系|日本の郵便番号|学校コード|国の一覧|都市計画|用途地域)$/.test(t))return'common';return null
     }
     function labelCategory(labels){
-      const text = labels.join(' ').toLowerCase();
-      for (const cat of ['transport','date','org','place','common']) {
-        if (typeRules[cat].some(word => text.includes(word.toLowerCase()))) return cat;
-      }
-      return 'other';
+      const set=new Set(labels.map(norm));
+      for(const cat of ['transport','date','org','place','common'])if(exactType[cat].some(x=>set.has(norm(x))))return cat;
+      return'other'
     }
-    function saveCache(){
-      try {
-        const obj = {};
-        let n = 0;
-        for (const [title, cat] of categoryCache) { obj[title] = cat; if (++n >= 5000) break; }
-        localStorage.setItem(MEMORY_KEY, JSON.stringify(obj));
-      } catch (_) {}
-    }
-    function applyVisibility(){
-      if (!isTopicsTab()) { filterBar.hidden = true; return; }
-      filterBar.hidden = false;
-      const chips = [...topicList.querySelectorAll('.topic-chip')];
-      let visible = 0;
-      for (const chip of chips) {
-        const cat = chip.dataset.topicCategory || 'other';
-        const show = cat === 'other' || !!state[cat];
-        chip.hidden = !show;
-        if (show) visible++;
-      }
-      if (chips.length) sheetCount.textContent = queueRunning ? `${visible}/${chips.length} · 型確認中` : `${visible}/${chips.length}`;
-    }
-    function prepareTopics(){
-      if (!isTopicsTab()) return;
-      const chips = [...topicList.querySelectorAll('.topic-chip')];
-      if (!chips.length) return;
-      for (const chip of chips) {
-        const title = topicTitleFromChip(chip);
-        chip.dataset.topicTitle = title;
-        let cat = categoryCache.get(title) || obviousCategory(title);
-        if (cat) categoryCache.set(title, cat);
-        chip.dataset.topicCategory = cat || 'other';
-        if (!cat && !queued.has(title)) { queued.add(title); queue.push(title); }
-      }
-      applyVisibility();
-      runQueue();
-    }
-    async function fetchJson(url){
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(String(response.status));
-      return response.json();
-    }
+    function saveCache(){try{const o={};let n=0;for(const [t,c]of categoryCache){o[t]=c;if(++n>=5000)break}localStorage.setItem(MEMORY_KEY,JSON.stringify(o))}catch(_){}}
+    function applyVisibility(){if(!isTopicsTab()){filterBar.hidden=true;return}filterBar.hidden=false;const chips=[...topicList.querySelectorAll('.topic-chip')];let visible=0;for(const chip of chips){const cat=chip.dataset.topicCategory||'other',show=cat==='other'||!!state[cat];chip.hidden=!show;if(show)visible++}if(chips.length)sheetCount.textContent=queueRunning?`${visible}/${chips.length} · 型確認中`:`${visible}/${chips.length}`}
+    function prepareTopics(){if(!isTopicsTab())return;const chips=[...topicList.querySelectorAll('.topic-chip')];if(!chips.length)return;for(const chip of chips){const title=topicTitleFromChip(chip);chip.dataset.topicTitle=title;let cat=categoryCache.get(title)||obviousCategory(title);if(cat)categoryCache.set(title,cat);chip.dataset.topicCategory=cat||'other';if(!cat&&!queued.has(title)){queued.add(title);queue.push(title)}}applyVisibility();runQueue()}
+    async function fetchJson(url){const r=await fetch(url);if(!r.ok)throw new Error(String(r.status));return r.json()}
     async function classifyBatch(titles){
-      const result = new Map();
-      const pageParams = new URLSearchParams({action:'query',format:'json',origin:'*',prop:'pageprops',ppprop:'wikibase_item',redirects:'1',titles:titles.join('|')});
-      const pages = await fetchJson('https://ja.wikipedia.org/w/api.php?' + pageParams);
-      const alias = new Map(titles.map(t => [t,t]));
-      for (const n of pages.query?.normalized || []) alias.set(n.to, alias.get(n.from) || n.from);
-      for (const r of pages.query?.redirects || []) alias.set(r.to, alias.get(r.from) || r.from);
-      const qidMap = new Map();
-      for (const page of Object.values(pages.query?.pages || {})) {
-        const original = alias.get(page.title) || page.title;
-        const qid = page.pageprops?.wikibase_item;
-        if (qid) qidMap.set(qid, original); else result.set(original, 'other');
-      }
-      const qids = [...qidMap.keys()];
-      if (!qids.length) return result;
-      const entityParams = new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:qids.join('|'),props:'claims'});
-      const entities = await fetchJson('https://www.wikidata.org/w/api.php?' + entityParams);
-      const typeIds = new Set();
-      const itemTypes = new Map();
-      for (const qid of qids) {
-        const ids = (entities.entities?.[qid]?.claims?.P31 || []).map(c => c.mainsnak?.datavalue?.value?.id).filter(Boolean);
-        itemTypes.set(qid, ids); ids.forEach(id => typeIds.add(id));
-      }
-      const labels = new Map();
-      const ids = [...typeIds];
-      for (let i=0;i<ids.length;i+=50) {
-        const part = ids.slice(i,i+50);
-        const labelParams = new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:part.join('|'),props:'labels',languages:'ja|en'});
-        const data = await fetchJson('https://www.wikidata.org/w/api.php?' + labelParams);
-        for (const id of part) {
-          const e = data.entities?.[id];
-          labels.set(id, [e?.labels?.ja?.value,e?.labels?.en?.value].filter(Boolean));
-        }
-      }
-      for (const qid of qids) {
-        const typeLabels = (itemTypes.get(qid) || []).flatMap(id => labels.get(id) || []);
-        result.set(qidMap.get(qid), labelCategory(typeLabels));
-      }
-      return result;
+      const result=new Map(),pp=new URLSearchParams({action:'query',format:'json',origin:'*',prop:'pageprops',ppprop:'wikibase_item',redirects:'1',titles:titles.join('|')}),pages=await fetchJson('https://ja.wikipedia.org/w/api.php?'+pp),alias=new Map(titles.map(t=>[t,t]));
+      for(const n of pages.query?.normalized||[])alias.set(n.to,alias.get(n.from)||n.from);for(const r of pages.query?.redirects||[])alias.set(r.to,alias.get(r.from)||r.from);const qidMap=new Map();for(const page of Object.values(pages.query?.pages||{})){const original=alias.get(page.title)||page.title,qid=page.pageprops?.wikibase_item;if(qid)qidMap.set(qid,original);else result.set(original,'other')}
+      const qids=[...qidMap.keys()];if(!qids.length)return result;const ep=new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:qids.join('|'),props:'claims'}),entities=await fetchJson('https://www.wikidata.org/w/api.php?'+ep),typeIds=new Set(),itemTypes=new Map();
+      for(const qid of qids){const ids=(entities.entities?.[qid]?.claims?.P31||[]).map(c=>c.mainsnak?.datavalue?.value?.id).filter(Boolean);itemTypes.set(qid,ids);ids.forEach(id=>typeIds.add(id))}
+      const labels=new Map(),ids=[...typeIds];for(let i=0;i<ids.length;i+=50){const part=ids.slice(i,i+50),lp=new URLSearchParams({action:'wbgetentities',format:'json',origin:'*',ids:part.join('|'),props:'labels',languages:'ja|en'}),data=await fetchJson('https://www.wikidata.org/w/api.php?'+lp);for(const id of part){const e=data.entities?.[id];labels.set(id,[e?.labels?.ja?.value,e?.labels?.en?.value].filter(Boolean))}}
+      for(const qid of qids){const ls=(itemTypes.get(qid)||[]).flatMap(id=>labels.get(id)||[]);result.set(qidMap.get(qid),labelCategory(ls))}return result
     }
-    function refreshChipCategories(changedTitles){
-      for (const chip of topicList.querySelectorAll('.topic-chip')) {
-        const title = chip.dataset.topicTitle || topicTitleFromChip(chip);
-        if (changedTitles.has(title)) chip.dataset.topicCategory = categoryCache.get(title) || 'other';
-      }
-      applyVisibility();
-    }
-    async function runQueue(){
-      if (queueRunning || !queue.length) return;
-      queueRunning = true;
-      applyVisibility();
-      while (queue.length) {
-        const batch = queue.splice(0, 20);
-        const changed = new Set();
-        try {
-          const result = await classifyBatch(batch);
-          for (const title of batch) {
-            const cat = result.get(title) || 'other';
-            categoryCache.set(title, cat);
-            changed.add(title);
-          }
-        } catch (_) {
-          for (const title of batch) queued.delete(title);
-        }
-        refreshChipCategories(changed);
-        await new Promise(resolve => setTimeout(resolve, 180));
-      }
-      queueRunning = false;
-      saveCache();
-      applyVisibility();
-    }
-    filterButtons.forEach(button => {
-      button.addEventListener('click', () => {
-        const cat = button.dataset.category;
-        state[cat] = !state[cat];
-        button.classList.toggle('active', state[cat]);
-        button.setAttribute('aria-pressed', String(state[cat]));
-        applyVisibility();
-      });
-    });
-    document.querySelectorAll('.sheet-tab').forEach(tab => {
-      tab.addEventListener('click', () => setTimeout(() => {
-        if (tab.dataset.tab === 'topics') { filterBar.hidden = false; prepareTopics(); }
-        else filterBar.hidden = true;
-      }, 0));
-    });
-    new MutationObserver(() => {
-      clearTimeout(mutationTimer);
-      mutationTimer = setTimeout(() => { if (isTopicsTab()) prepareTopics(); }, 80);
-    }).observe(topicList, {childList:true});
-    setTimeout(prepareTopics, 100);
+    function refresh(changed){for(const chip of topicList.querySelectorAll('.topic-chip')){const t=chip.dataset.topicTitle||topicTitleFromChip(chip);if(changed.has(t))chip.dataset.topicCategory=categoryCache.get(t)||'other'}applyVisibility()}
+    async function runQueue(){if(queueRunning||!queue.length)return;queueRunning=true;applyVisibility();while(queue.length){const batch=queue.splice(0,20),changed=new Set();try{const result=await classifyBatch(batch);for(const title of batch){categoryCache.set(title,result.get(title)||'other');changed.add(title)}}catch(_){for(const title of batch)queued.delete(title)}refresh(changed);await new Promise(r=>setTimeout(r,180))}queueRunning=false;saveCache();applyVisibility()}
+    filterButtons.forEach(b=>b.addEventListener('click',()=>{const cat=b.dataset.category;state[cat]=!state[cat];b.classList.toggle('active',state[cat]);b.setAttribute('aria-pressed',String(state[cat]));applyVisibility()}));
+    document.querySelectorAll('.sheet-tab').forEach(tab=>tab.addEventListener('click',()=>setTimeout(()=>{if(tab.dataset.tab==='topics'){filterBar.hidden=false;prepareTopics()}else filterBar.hidden=true},0)));
+    new MutationObserver(()=>{clearTimeout(mutationTimer);mutationTimer=setTimeout(()=>{if(isTopicsTab())prepareTopics()},80)}).observe(topicList,{childList:true});setTimeout(prepareTopics,100)
   })();
   </script>
 </body>
